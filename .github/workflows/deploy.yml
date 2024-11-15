@@ -1,0 +1,100 @@
+name: Deploy to GitHub Pages and Upload New Posts to Supabase
+
+on:
+  push:
+    branches: 'main'
+
+jobs:
+  build_site:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build site
+        env:
+          BASE_PATH: '/D4r3d3vil.github.io'
+        run: |
+          npm run build
+          touch build/.nojekyll
+
+      - name: Upload Artifacts
+        uses: actions/upload-pages-artifact@v1
+        with:
+          path: 'build/'
+
+  check_and_upload:
+    needs: build_site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history so we have full context
+          supa_key: ${{ secrets.SUPABASE_KEY }}
+        env:
+          supa_key: ${{ secrets.SUPABASE_KEY }}
+
+      - name: List files in uploads directory
+        id: list_files
+        run: |
+          uploads_files=$(find src/uploads/pages -type f)
+          for file in ${uploads_files}
+          do
+            echo "Uploading $file to Supabase"
+            curl -X POST 'https://njjzkksmwdmmrlfmafwe.supabase.co/rest/v1/posts?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qanpra3Ntd2RtbXJsZm1hZndlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTcyMjg2NDkxMiwiZXhwIjoyMDM4NDQwOTEyfQ.DKmVtJ8mNDAJx-O_ACnPkO56XQOqoGflcVUtKBru620' \
+            -H "apikey: ${supa_key}" \
+            -H "Authorization: Bearer ${supa_key}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d "{\"name\": \"$file\"}"
+          done
+
+      - name: Debugging - Display files
+        run: |
+          echo "Files found:"
+          echo "${{ steps.list_files.outputs.uploads_files }}"
+
+      - name: Upload new posts to Supabase
+        if: ${{ steps.list_files.outputs.uploads_files != '' }}
+        run: |
+          files="${{ steps.list_files.outputs.uploads_files }}"
+          IFS=$'\n' read -d '' -r -a file_array <<< "$files"
+          for file in "${file_array[@]}"
+          do
+            echo "Uploading $file to Supabase"
+            curl -X POST 'https://njjzkksmwdmmrlfmafwe.supabase.co/rest/v1/posts' \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d "{\"name\": \"$file\"}"
+          done
+
+  deploy:
+    needs: [build_site, check_and_upload]
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v1
